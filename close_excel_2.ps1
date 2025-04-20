@@ -1,5 +1,5 @@
 # Path to the shared file
-$FilePath = "\\nas10\s_estomatologia_Escalas_urgencias$\0. BLOCOS 2025\AL.xlsx"
+$FilePath = "C: \Users\61840\Desktop\teste.xlsx"
 
 While ($true) {
     if (Test-Path $FilePath) {
