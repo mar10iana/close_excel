@@ -1,5 +1,5 @@
 # Path to the shared file
-$FilePath = "C:\Users\ruipe\OneDrive\Documentos\teste.xlsx"
+$FilePath = "C:\Users\61840\Desktop\teste.xlsx"
 $IdleThresholdMinutes = 1
 
 # Normalizar o caminho (evitar problemas com barras)
