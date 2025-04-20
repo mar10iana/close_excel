@@ -1,5 +1,5 @@
 # Path to the shared file
-$FilePath = "C: \Users\61840\Desktop\teste.xlsx"
+$FilePath = "C:\Users\61840\Desktop\teste.xlsx"
 
 While ($true) {
     if (Test-Path $FilePath) {
