@@ -2,22 +2,28 @@
 $FilePath = "C:\Users\61840\Desktop\teste.xlsx"
 $IdleThresholdMinutes = 1
 
-# Normalizar o caminho (evitar problemas com barras)
+# Normalize the path
 $NormalizedFilePath = [System.IO.Path]::GetFullPath($FilePath)
 
-Write-Host "versao 3 Monitoring file: $NormalizedFilePath"
+Write-Host "versao 4 - Monitoring file: $NormalizedFilePath"
 
 While ($true) {
     if (Test-Path $NormalizedFilePath) {
-        $FileLastModified = (Get-Item $NormalizedFilePath).LastWriteTime
+        $FileItem = Get-Item $NormalizedFilePath
+
+        $FileLastModified = $FileItem.LastWriteTime
+        $FileLastAccessed = $FileItem.LastAccessTime
+
         $TimeSinceLastModified = (Get-Date) - $FileLastModified
+        $TimeSinceLastAccessed = (Get-Date) - $FileLastAccessed
 
         Write-Host "Time since last modified: $([math]::Round($TimeSinceLastModified.TotalMinutes,2)) minutes"
+        Write-Host "Time since last accessed: $([math]::Round($TimeSinceLastAccessed.TotalMinutes,2)) minutes"
 
-        if ($TimeSinceLastModified.TotalMinutes -ge $IdleThresholdMinutes) {
-            Write-Host "Threshold exceeded. Searching for Excel processes..."
+        if ($TimeSinceLastModified.TotalMinutes -ge $IdleThresholdMinutes -and $TimeSinceLastAccessed.TotalMinutes -ge $IdleThresholdMinutes) {
+            Write-Host "Threshold exceeded for both modified and accessed. Searching for Excel processes..."
 
-            # Obter todos os processos excel.exe
+            # Get all excel.exe processes
             $ExcelProcesses = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "EXCEL.EXE" }
 
             $TargetProcessFound = $false
@@ -26,11 +32,11 @@ While ($true) {
                 if ($Process.CommandLine) {
                     Write-Host "Process command line: $($Process.CommandLine)"
 
-                    # Verificar se o processo está a usar o ficheiro
+                    # Check if the process is using the file
                     if ($Process.CommandLine -like "*$($NormalizedFilePath)*") {
                         Write-Host "Target Excel process found. PID: $($Process.ProcessId). Closing it..."
 
-                        # Fechar apenas esse processo
+                        # Close only that process
                         Stop-Process -Id $Process.ProcessId -Force -ErrorAction SilentlyContinue
 
                         $TargetProcessFound = $true
@@ -42,12 +48,12 @@ While ($true) {
                 Write-Host "No Excel process is using the target file."
             }
 
-            # Depois de agir (fechar ou não), seguir direto sem esperar muito
+            # After acting (closing or not), proceed without waiting too long
             Write-Host "Waiting 10 seconds before next check after action..."
             Start-Sleep -Seconds 10
         }
         else {
-            Write-Host "File modified recently. No action needed."
+            Write-Host "File modified or accessed recently. No action needed."
             Start-Sleep -Seconds 10
         }
     }
