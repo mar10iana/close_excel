@@ -1,7 +1,7 @@
 # Caminho para o ficheiro partilhado
 $FilePath = "\\nas10\s_estomatologia_Escalas_urgencias`$\0. BLOCOS 2025\AL.xlsx"
-$IdleThresholdMinutes = 5
-$GracePeriodMinutes = 5
+$IdleThresholdMinutes = 1
+$GracePeriodMinutes = 1
 
 # Dicionário de PIDs e os seus tempos de aviso e adiamento
 $WarnedPIDs = @{}
