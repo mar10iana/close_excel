@@ -1,14 +1,14 @@
-# Caminho para o ficheiro partilhado oi
+# Caminho para o ficheiro partilhado
 $FilePath = "\\nas10\s_estomatologia_Escalas_urgencias`$\0. BLOCOS 2025\AL.xlsx"
 $IdleThresholdMinutes = 5
 $GracePeriodMinutes = 5
 
-# Dicionário de PIDs e os seus tempos de aviso e adiamento
+# Dicionário de PIDs e tempos de aviso
 $WarnedPIDs = @{}
 
 Add-Type -AssemblyName PresentationFramework
 
-Write-Host "Versão 7 - Monitor com opção de adiar fecho por 5 minutos"
+Write-Host "Versão 8 - Com fallback para CreationDate inválida"
 
 while ($true) {
     $ExcelProcesses = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "EXCEL.EXE" }
@@ -16,20 +16,20 @@ while ($true) {
     foreach ($Process in $ExcelProcesses) {
         if ($Process.CommandLine -and $Process.CommandLine -like "*$($FilePath)*") {
 
-            # Obter PID e garantir que a data é válida
             $ProcID = $Process.ProcessId
             $StartTime = $null
+
             try {
                 if ($Process.CreationDate) {
                     $StartTime = [Management.ManagementDateTimeConverter]::ToDateTime($Process.CreationDate)
                 }
             } catch {
-                Write-Host "Processo PID $ProcID tem CreationDate inválida. Ignorado."
-                continue
+                Write-Host "Processo PID $ProcID tem CreationDate inválida. A usar hora atual como fallback."
+                $StartTime = Get-Date  # fallback
             }
 
             if (-not $StartTime) {
-                Write-Host "Processo PID $ProcID sem CreationDate válida. Ignorado."
+                Write-Host "Processo PID $ProcID sem StartTime válido. Ignorado."
                 continue
             }
 
@@ -73,7 +73,7 @@ while ($true) {
         }
     }
 
-    # Limpar PIDs que já não existem
+    # Limpeza de PIDs inexistentes
     $ExistingPIDs = $ExcelProcesses.ProcessId
     $PIDsToRemove = $WarnedPIDs.Keys | Where-Object { $_ -notin $ExistingPIDs }
     foreach ($OldPID in $PIDsToRemove) {
