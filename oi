@@ -1,14 +1,15 @@
-# Caminho para o ficheiro partilhado
+# Caminho para o ficheiro partilhado lala
 $FilePath = "\\nas10\s_estomatologia_Escalas_urgencias`$\0. BLOCOS 2025\AL.xlsx"
 $IdleThresholdMinutes = 5
 $GracePeriodMinutes = 5
 
-# Dicionário de PIDs e tempos de aviso
+# Dicionários de estado por PID
 $WarnedPIDs = @{}
+$FallbackStartTimes = @{}
 
 Add-Type -AssemblyName PresentationFramework
 
-Write-Host "Versão 8 - Com fallback para CreationDate inválida"
+Write-Host "Versão 9 - StartTime persistente para CreationDate inválido"
 
 while ($true) {
     $ExcelProcesses = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "EXCEL.EXE" }
@@ -24,13 +25,18 @@ while ($true) {
                     $StartTime = [Management.ManagementDateTimeConverter]::ToDateTime($Process.CreationDate)
                 }
             } catch {
-                Write-Host "Processo PID $ProcID tem CreationDate inválida. A usar hora atual como fallback."
-                $StartTime = Get-Date  # fallback
+                # Ignorado
             }
 
+            # Fallback se não conseguimos obter StartTime
             if (-not $StartTime) {
-                Write-Host "Processo PID $ProcID sem StartTime válido. Ignorado."
-                continue
+                if ($FallbackStartTimes.ContainsKey($ProcID)) {
+                    $StartTime = $FallbackStartTimes[$ProcID]
+                } else {
+                    $StartTime = Get-Date
+                    $FallbackStartTimes[$ProcID] = $StartTime
+                    Write-Host "Processo PID $ProcID tem CreationDate inválida. A usar hora atual como fallback inicial."
+                }
             }
 
             $RunningTime = (Get-Date) - $StartTime
@@ -63,6 +69,7 @@ while ($true) {
                         Write-Host "Tempo de graça terminado para PID $ProcID. Fechando..."
                         Stop-Process -Id $ProcID -Force -ErrorAction SilentlyContinue
                         $WarnedPIDs.Remove($ProcID)
+                        $FallbackStartTimes.Remove($ProcID)
                     }
                     else {
                         $Remaining = [math]::Round($GracePeriodMinutes - $ElapsedSinceWarning.TotalMinutes, 1)
@@ -73,11 +80,12 @@ while ($true) {
         }
     }
 
-    # Limpeza de PIDs inexistentes
+    # Limpar PIDs que já não existem
     $ExistingPIDs = $ExcelProcesses.ProcessId
     $PIDsToRemove = $WarnedPIDs.Keys | Where-Object { $_ -notin $ExistingPIDs }
     foreach ($OldPID in $PIDsToRemove) {
         $WarnedPIDs.Remove($OldPID)
+        $FallbackStartTimes.Remove($OldPID)
     }
 
     Start-Sleep -Seconds 10
