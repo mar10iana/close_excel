@@ -1,0 +1,77 @@
+# Caminho para o ficheiro partilhado
+$FilePath = "\\nas10\s_estomatologia_Escalas_urgencias`$\0. BLOCOS 2025\AL.xlsx"
+$IdleThresholdMinutes = 5
+$GracePeriodMinutes = 5
+
+# Dicionário de PIDs e os seus tempos de aviso e adiamento
+$WarnedPIDs = @{}
+
+Add-Type -AssemblyName PresentationFramework
+
+Write-Host "Versão 7 - Monitor com opção de adiar fecho por 5 minutos"
+
+while ($true) {
+    $ExcelProcesses = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "EXCEL.EXE" }
+
+    foreach ($Process in $ExcelProcesses) {
+        if ($Process.CommandLine -and $Process.CommandLine -like "*$($FilePath)*") {
+
+            # Verificar se há CreationDate válida
+            if (-not $Process.CreationDate) {
+                Write-Host "Process PID $($Process.ProcessId) não tem CreationDate válida. Ignorado."
+                continue
+            }
+
+            $StartTime = [Management.ManagementDateTimeConverter]::ToDateTime($Process.CreationDate)
+            $RunningTime = (Get-Date) - $StartTime
+            $RunningMinutes = [math]::Round($RunningTime.TotalMinutes, 2)
+            $ProcID = $Process.ProcessId
+
+            Write-Host "Process PID $ProcID using file for $RunningMinutes minutes"
+
+            if ($RunningTime.TotalMinutes -ge $IdleThresholdMinutes) {
+                if (-not $WarnedPIDs.ContainsKey($ProcID)) {
+                    # Pop-up com opção de adiar
+                    $response = [System.Windows.MessageBox]::Show(
+                        "O ficheiro '$FilePath' está aberto há mais de $IdleThresholdMinutes minutos.`nPretende adiar o fecho por mais $GracePeriodMinutes minutos?",
+                        "Aviso de fecho automático",
+                        'YesNo',
+                        'Warning'
+                    )
+
+                    if ($response -eq 'Yes') {
+                        $WarnedPIDs[$ProcID] = Get-Date
+                        Write-Host "Utilizador adiou fecho para PID $ProcID. Tempo extra concedido."
+                    }
+                    else {
+                        # Marca como já ultrapassado o tempo de graça
+                        $WarnedPIDs[$ProcID] = (Get-Date).AddMinutes(-$GracePeriodMinutes - 1)
+                        Write-Host "Utilizador recusou adiar. O processo será encerrado após tempo de graça."
+                    }
+                }
+                else {
+                    $WarnTime = $WarnedPIDs[$ProcID]
+                    $ElapsedSinceWarning = (Get-Date) - $WarnTime
+                    if ($ElapsedSinceWarning.TotalMinutes -ge $GracePeriodMinutes) {
+                        Write-Host "Tempo de graça terminado para PID $ProcID. Fechando..."
+                        Stop-Process -Id $ProcID -Force -ErrorAction SilentlyContinue
+                        $WarnedPIDs.Remove($ProcID)
+                    }
+                    else {
+                        $Remaining = [math]::Round($GracePeriodMinutes - $ElapsedSinceWarning.TotalMinutes, 1)
+                        Write-Host "Ainda em tempo de graça para PID $ProcID. Faltam $Remaining minutos."
+                    }
+                }
+            }
+        }
+    }
+
+    # Limpeza de PIDs que já não existem
+    $ExistingPIDs = $ExcelProcesses.ProcessId
+    $PIDsToRemove = $WarnedPIDs.Keys | Where-Object { $_ -notin $ExistingPIDs }
+    foreach ($OldPID in $PIDsToRemove) {
+        $WarnedPIDs.Remove($OldPID)
+    }
+
+    Start-Sleep -Seconds 10
+}
