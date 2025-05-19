@@ -94,9 +94,11 @@ while ($true) {
                     $response = Show-TimedPrompt -message "O ficheiro '$FilePath' está aberto há mais de $IdleThresholdMinutes minutos.`nPretende adiar o fecho por mais $GracePeriodMinutes minutos?" -title "Aviso de fecho automático" -timeoutSeconds 30
 
                     if ($response -eq 'Yes') {
-                        $WarnedPIDs[$ProcID] = Get-Date
-                        Write-Host "Utilizador adiou fecho para PID $ProcID."
-                    } else {
+                        $FallbackStartTimes[$ProcID] = Get-Date
+                        $WarnedPIDs.Remove($ProcID)  # remove qualquer aviso anterior
+                        Write-Host "Utilizador adiou fecho para PID $ProcID. Recomeçar contagem."
+                    }
+                    else {
                         $WarnedPIDs[$ProcID] = (Get-Date).AddMinutes(-$GracePeriodMinutes - 1)
                         Write-Host "Sem resposta ou utilizador recusou adiar. Fechará após tolerância."
                     }
