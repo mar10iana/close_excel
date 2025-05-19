@@ -1,49 +1,131 @@
-# Path to the shared file
-$FilePath = "\\nas10\s_estomatologia_Escalas_urgencias$\0. BLOCOS 2025\AL.xlxs"
+# Caminho para o ficheiro partilhado
+$FilePath = "\\nas10\s_estomatologia_Escalas_urgencias`$\0. BLOCOS 2025\AL.xlsx"
+$IdleThresholdMinutes = 1
+$GracePeriodMinutes = 1
 
-# Monitor Excel processes
-While ($true) {
-    # Check if the shared file exists
-    if (Test-Path $FilePath) {
-        # Get the last modified time of the file
-        $FileLastModified = (Get-Item $FilePath).LastWriteTime
-        $TimeSinceLastModified = (Get-Date) - $FileLastModified
+# Dicionários por PID
+$WarnedPIDs = @{}
+$FallbackStartTimes = @{}
 
-        # Get running Excel processes
-        $ExcelProcesses = Get-Process -Name excel -ErrorAction SilentlyContinue
+Add-Type -AssemblyName System.Windows.Forms
 
-        if ($ExcelProcesses) {
-            # If the file hasn't been modified within the threshold, save changes and close Excel
-            if ($TimeSinceLastModified.TotalMinutes -ge 1) { # Replace 1 with your desired idle threshold
-                Write-Host "File has not been modified for $([math]::Round($TimeSinceLastModified.TotalMinutes, 2)) minutes. Saving changes and closing Excel."
+function Show-TimedPrompt {
+    param (
+        [string]$message,
+        [string]$title,
+        [int]$timeoutSeconds = 30
+    )
 
-                # Interact with Excel COM object
-                $ExcelApp = New-Object -ComObject Excel.Application
-                $ExcelApp.Visible = $false # Run Excel in the background
+    $form = New-Object Windows.Forms.Form
+    $form.Text = $title
+    $form.Size = New-Object Drawing.Size(400,150)
+    $form.StartPosition = "CenterScreen"
+    $form.TopMost = $true
+    $form.ControlBox = $false
 
-                # Loop through open workbooks
-                foreach ($Workbook in $ExcelApp.Workbooks) {
-                    try {
-                        $Workbook.Save() # Save the workbook
-                        Write-Host "Saved workbook: $($Workbook.FullName)"
-                    } catch {
-                        Write-Host "Failed to save workbook: $($Workbook.FullName). Error: $_"
+
+    $label = New-Object Windows.Forms.Label
+    $label.Text = $message
+    $label.Size = New-Object Drawing.Size(360,60)
+    $label.Location = New-Object Drawing.Point(20,10)
+    $form.Controls.Add($label)
+
+    $yesButton = New-Object Windows.Forms.Button
+    $yesButton.Text = "Adiar"
+    $yesButton.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+    $yesButton.Location = New-Object Drawing.Point(80,80)
+    $form.Controls.Add($yesButton)
+
+    $noButton = New-Object Windows.Forms.Button
+    $noButton.Text = "Fechar"
+    $noButton.DialogResult = [System.Windows.Forms.DialogResult]::No
+    $noButton.Location = New-Object Drawing.Point(200,80)
+    $form.Controls.Add($noButton)
+
+    $form.AcceptButton = $yesButton
+    $form.CancelButton = $noButton
+
+    $timer = New-Object Windows.Forms.Timer
+    $timer.Interval = $timeoutSeconds * 1000
+    $timer.Add_Tick({
+        $form.DialogResult = [System.Windows.Forms.DialogResult]::No
+        $form.Close()
+    })
+    $timer.Start()
+
+    $result = $form.ShowDialog()
+    $timer.Stop()
+    return $result
+}
+
+Write-Host "Monitor com aviso com timeout (30s) e adiamento de fecho"
+
+while ($true) {
+    $ExcelProcesses = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "EXCEL.EXE" }
+
+    foreach ($Process in $ExcelProcesses) {
+        if ($Process.CommandLine -and $Process.CommandLine -like "*$($FilePath)*") {
+
+            $ProcID = $Process.ProcessId
+            $StartTime = $null
+
+            try {
+                if ($Process.CreationDate) {
+                    $StartTime = [Management.ManagementDateTimeConverter]::ToDateTime($Process.CreationDate)
+                }
+            } catch {}
+
+            if (-not $StartTime) {
+                if ($FallbackStartTimes.ContainsKey($ProcID)) {
+                    $StartTime = $FallbackStartTimes[$ProcID]
+                } else {
+                    $StartTime = Get-Date
+                    $FallbackStartTimes[$ProcID] = $StartTime
+                    Write-Host "Processo PID $ProcID sem CreationDate válida. Usar hora atual como início."
+                }
+            }
+
+            $RunningTime = (Get-Date) - $StartTime
+            $RunningMinutes = [math]::Round($RunningTime.TotalMinutes, 2)
+            Write-Host "Process PID $ProcID usando o ficheiro há $RunningMinutes minutos."
+
+            if ($RunningTime.TotalMinutes -ge $IdleThresholdMinutes) {
+                if (-not $WarnedPIDs.ContainsKey($ProcID)) {
+                    $response = Show-TimedPrompt -message "O ficheiro '$FilePath' está aberto há mais de $IdleThresholdMinutes minutos.`nPretende adiar o fecho por mais $GracePeriodMinutes minutos?" -title "Aviso de fecho automático" -timeoutSeconds 30
+
+                    if ($response -eq 'Yes') {
+                        $WarnedPIDs[$ProcID] = Get-Date
+                        Write-Host "Utilizador adiou fecho para PID $ProcID."
+                    } else {
+                        $WarnedPIDs[$ProcID] = (Get-Date).AddMinutes(-$GracePeriodMinutes - 1)
+                        Write-Host "Sem resposta ou utilizador recusou adiar. Fechará após tolerância."
                     }
                 }
-
-                # Quit Excel and clean up
-                $ExcelApp.Quit()
-                [System.Runtime.Interopservices.Marshal]::ReleaseComObject($ExcelApp) | Out-Null
-                Stop-Process -Name excel -Force -ErrorAction SilentlyContinue
-            } else {
-                Write-Host "File was modified recently ($([math]::Round($TimeSinceLastModified.TotalMinutes, 2)) minutes ago). Excel remains open."
+                else {
+                    $WarnTime = $WarnedPIDs[$ProcID]
+                    $Elapsed = (Get-Date) - $WarnTime
+                    if ($Elapsed.TotalMinutes -ge $GracePeriodMinutes) {
+                        Write-Host "Fecho automático do Excel PID $ProcID..."
+                        Stop-Process -Id $ProcID -Force -ErrorAction SilentlyContinue
+                        $WarnedPIDs.Remove($ProcID)
+                        $FallbackStartTimes.Remove($ProcID)
+                    }
+                    else {
+                        $Remaining = [math]::Round($GracePeriodMinutes - $Elapsed.TotalMinutes, 1)
+                        Write-Host "Aguardando fim da tolerância: $Remaining minutos restantes."
+                    }
+                }
             }
-        } else {
-            Write-Host "No Excel processes are running."
         }
-    } else {
-        Write-Host "The file path $FilePath does not exist. Cannot monitor."
     }
 
-    Start-Sleep -Seconds 30
+    # Limpeza de PIDs terminados
+    $ExistingPIDs = $ExcelProcesses.ProcessId
+    $ToRemove = $WarnedPIDs.Keys | Where-Object { $_ -notin $ExistingPIDs }
+    foreach ($OldPID in $ToRemove) {
+        $WarnedPIDs.Remove($OldPID)
+        $FallbackStartTimes.Remove($OldPID)
+    }
+
+    Start-Sleep -Seconds 10
 }
